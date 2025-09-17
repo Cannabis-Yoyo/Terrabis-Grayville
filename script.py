@@ -112,6 +112,69 @@ def wait_present(driver, locator, timeout=20):
     return WebDriverWait(driver, timeout).until(EC.presence_of_element_located(locator))
 # --------------------------------------
 
+def type_react_input(driver, el, text):
+    """
+    Sets value on a React-controlled <input> and dispatches the right events so filtering happens in headless too.
+    """
+    driver.execute_script("""
+    const el = arguments[0], val = arguments[1];
+    const proto = el.__proto__ || HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set
+                || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(el, val);
+    el.dispatchEvent(new Event('input',  {bubbles: true}));
+    el.dispatchEvent(new Event('change', {bubbles: true}));
+    """, el, text)
+
+def click_show_more_until_exhausted(driver):
+    """
+    Some filters hide brands behind a 'Show more' button.
+    Click it repeatedly if present.
+    """
+    import time
+    while True:
+        try:
+            btn = driver.find_element(By.XPATH, "//button[contains(., 'Show more') or contains(., 'More')]")
+            if btn.is_displayed() and btn.is_enabled():
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                time.sleep(0.2)
+                stable_click(driver, btn)
+                time.sleep(0.6)
+            else:
+                break
+        except NoSuchElementException:
+            break
+
+def scroll_filter_panel_to_find_label(driver, brand_text, max_scrolls=30):
+    """
+    When the brand list is virtualized, we need to scroll the panel to load more labels.
+    """
+    import time
+    # The list container is usually the element right after the 'Brands' button
+    try:
+        panel = driver.find_element(By.XPATH, "//button[contains(., 'Brands')]/following-sibling::*[1]")
+    except NoSuchElementException:
+        panel = None
+
+    brand_norm = " ".join(brand_text.lower().split())
+
+    for _ in range(max_scrolls):
+        # Try to find the label in the currently loaded chunk
+        labels = driver.find_elements(By.XPATH, "//label")
+        for lbl in labels:
+            t = " ".join(lbl.text.lower().split())
+            if brand_norm in t and lbl.is_displayed():
+                stable_click(driver, lbl)
+                return True
+        # If we can scroll a dedicated panel, do that; otherwise scroll window
+        if panel:
+            driver.execute_script("arguments[0].scrollTop = arguments[0].scrollTop + arguments[0].clientHeight;", panel)
+        else:
+            driver.execute_script("window.scrollBy(0, 600);")
+        time.sleep(0.4)
+
+    return False
+
 
 TOKEN_RE = re.compile(r"""
     \d+(?:\.\d+)?            # integer or decimal, e.g. 3 or 3.5
@@ -548,26 +611,24 @@ no_brand_categories = ['Apparel']
 
 def scrape_brand(brand, driver):
     """
-    Function to scrape and select the brand from the search results.
-    If the brand name in Excel differs from the website, it uses the mapped name.
+    Selects a brand using a headless-safe approach:
+    1) Expand "Brands" section
+    2) Try React-safe typing into the search box (dispatch events)
+    3) Fallback: click 'Show more' and scan/scroll labels
     """
-    
-    # 1) Check if the brand exists in the mapping, if not, use the original name
-    brand_name_on_website = brand_mapping.get(brand, brand)  # Use mapped name if exists
-    
-    # 2) If we're in Topicals or Accessories, skip the search box and do direct checkbox-only
+    brand_name_on_website = brand_mapping.get(brand, brand)
+    target_norm = " ".join(brand_name_on_website.lower().split())
+
+    # If category doesn't use brand filters, do the simple direct scan you had
     if getattr(driver, "current_category", None) in ["TOPICAL", "ACCESSORIES"]:
         labels = driver.find_elements(By.XPATH, "//label")
         for lbl in labels:
-            # Normalize whitespace and match the brand name
             label_text = " ".join(lbl.text.split()).lower()
-            target_text = " ".join(brand_name_on_website.lower().split())
-            if target_text in label_text:
+            if target_norm in label_text:
                 cb = driver.find_element(By.CSS_SELECTOR, f"input[id='{lbl.get_attribute('for')}']")
                 if not cb.is_selected():
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", lbl)
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", lbl)
                     time.sleep(0.2)
-                    # click the label instead of the input (headless-safe)
                     stable_click(driver, lbl)
                     print(f"✔ Selected brand (direct): {lbl.text}")
                 else:
@@ -575,58 +636,75 @@ def scrape_brand(brand, driver):
                 return True
         st.error(f"⚠️ Brand not found (direct): {brand_name_on_website}")
         return False
-        
-    # 3) Expand the "Brands" section if it's collapsed  
+
+    # Expand "Brands" filter
     try:
         brand_section_button = driver.find_element(By.XPATH, "//button[contains(., 'Brands')]")
-        # 🔑 Always scroll to the Brands section before anything else
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", brand_section_button)
-        time.sleep(1)
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", brand_section_button)
+        time.sleep(0.5)
         if brand_section_button.get_attribute("aria-expanded") == "false":
-            driver.execute_script("arguments[0].click();", brand_section_button)
-            time.sleep(2)
-            print("✔ Expanded the 'Brands' filter section.")
+            stable_click(driver, brand_section_button)
+            time.sleep(0.8)
+        # Keep the section in view
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", brand_section_button)
+        time.sleep(0.3)
+    except Exception as e:
+        print(f"Could not expand 'Brands' section: {e}")
 
-        # 🔑 Scroll again to ensure the search box area is in view
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", brand_section_button)
-        time.sleep(1)
+    # Try search input first (React-safe)
+    try:
+        # Avoid hashed classes; use placeholder/role based selectors
+        search_input = WebDriverWait(driver, 6).until(EC.presence_of_element_located((
+            By.CSS_SELECTOR,
+            "input[placeholder*='earch'][type='text'], input[placeholder*='Brand'], input[type='search']"
+        )))
+        # Focus and clear via JS, then React-safe set
+        driver.execute_script("arguments[0].focus();", search_input)
+        driver.execute_script("arguments[0].value='';", search_input)
+        type_react_input(driver, search_input, brand_name_on_website)
+        time.sleep(1.0)  # let debounce/filtering run
 
-        # 3.1) Wait for the brand search box to be ready
-        search_input = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "input.search-bar-filter__StyledInput-sc-1qap7by-1"))
-        )
-        search_input.clear()
-        search_input.send_keys(brand_name_on_website)  # Use the mapped brand name here
-        time.sleep(2)  # Allow time for the search results to appear
+        # Wait for matching label to appear
+        label = WebDriverWait(driver, 6).until(EC.presence_of_element_located((
+            By.XPATH,
+            f"//label[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{target_norm}')]"
+        )))
+        driver.execute_script("arguments[0].scrollIntoView({block:'center'});", label)
+        time.sleep(0.2)
+        stable_click(driver, label)
 
-        # Find all available brands after searching
-        brand_labels = driver.find_elements(By.XPATH, "//label")
-        available_brands = [label.text.strip() for label in brand_labels]
+        # Ensure checkbox toggled
+        try:
+            for_attr = label.get_attribute("for")
+            cb = driver.find_element(By.CSS_SELECTOR, f"input[id='{for_attr}']")
+            if not cb.is_selected():
+                stable_click(driver, label)
+        except Exception:
+            pass
 
-        # 3.2) Try to find a matching brand label and select its checkbox
-        for label in brand_labels:
-            if brand_name_on_website.lower() in label.text.lower():  # Case-insensitive match
-                brand_for_attr = label.get_attribute("for")
-                brand_checkbox = driver.find_element(By.CSS_SELECTOR, f"input[id='{brand_for_attr}']")
-                if not brand_checkbox.is_selected():
-                    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", label)
-                    time.sleep(0.2)
-                    # click the label (more reliable in headless)
-                    stable_click(driver, label)
-                    print(f"✔ Selected brand: {label.text}")
-                else:
-                    print(f"✔ Brand '{label.text}' is already selected.")
-                
-                time.sleep(2)
-                return True
-        
-        # 3.3) If brand is not found in the available list
-        print(f"⚠️ Brand '{brand_name_on_website}' is not available on this website.")
-        return False
+        print(f"✔ Selected brand via search: {brand_name_on_website}")
+        time.sleep(1.0)
+        return True
 
     except Exception as e:
-        print(f"⚠️ Could not find or select the brand '{brand_name_on_website}'. {e}")
+        print(f"Search-based selection failed (falling back): {e}")
+
+    # Fallbacks when search is unreliable in headless
+    click_show_more_until_exhausted(driver)
+    try:
+        ok = scroll_filter_panel_to_find_label(driver, brand_name_on_website, max_scrolls=40)
+        if ok:
+            print(f"✔ Selected brand via list scan: {brand_name_on_website}")
+            time.sleep(1.0)
+            return True
+        else:
+            st.error(f"⚠️ Brand not found: {brand_name_on_website}")
+            return False
+    except Exception as e:
+        print(f"Label-scan fallback failed: {e}")
+        st.error(f"⚠️ Could not select brand '{brand_name_on_website}'.")
         return False
+
 
 def normalize_weight(weight, has_unit=False):
     """
@@ -1339,6 +1417,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
