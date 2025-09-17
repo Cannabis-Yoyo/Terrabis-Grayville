@@ -1,4 +1,5 @@
-chromium
+chromiuM
 chromium-driver
 fonts-liberation
+fonts-noto-color-emoji
 libnss3
