@@ -347,51 +347,45 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
     except Exception as e:
         st.error(f"Error saving data to Excel for row {row_index}: {e}")
 
-def get_driver(headful: bool = False):
+def get_driver(headful: bool = False, proxy: str | None = None):
     import undetected_chromedriver as uc
     from selenium.webdriver.support.ui import WebDriverWait
 
     chrome_bin = _find_chrome_binary()
     if not chrome_bin:
-        raise FileNotFoundError(
-            "No Chrome/Chromium binary found. Install it or set UC_CHROME_BINARY."
-        )
+        raise FileNotFoundError("No Chrome/Chromium binary found. Install it or set UC_CHROME_BINARY.")
 
     os.environ["UC_CHROME_BINARY"] = chrome_bin
     major = _chrome_major(chrome_bin)
 
     options = uc.ChromeOptions()
 
-    # ✅ Let geolocation prompts auto-allow (some menus filter by location)
-    options.add_experimental_option("prefs", {
-        "profile.default_content_setting_values.geolocation": 1
-    })
-
-    # ✅ Faster DOM “ready” (optional)
-    try:
-        options.page_load_strategy = "eager"
-    except Exception:
-        pass
-
+    # --- headful/headless toggles ---
     if headful:
-        # headed
         options.add_argument("--start-maximized")
-        # keep the window open after the script finishes (nice for local debug)
         try:
             options.add_experimental_option("detach", True)
         except Exception:
             pass
-        # On Linux you often still need these two for containerized runs
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
     else:
-        # headless
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--hide-scrollbars")
 
+    # --- prefs & page-load strategy ---
+    options.add_experimental_option("prefs", {
+        "profile.default_content_setting_values.geolocation": 1
+    })
+    try:
+        options.page_load_strategy = "eager"
+    except Exception:
+        pass
+
+    # --- hardening/realism ---
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--force-device-scale-factor=1")
     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
@@ -399,10 +393,16 @@ def get_driver(headful: bool = False):
     options.add_argument("--enable-precise-memory-info")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
+    options.add_argument("--lang=en-US")
     options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
+
+    # --- optional proxy (server-side) ---
+    # Examples: proxy="http://host:port", proxy="socks5://host:1080"
+    if proxy:
+        options.add_argument(f"--proxy-server={proxy}")
 
     driver = uc.Chrome(
         options=options,
@@ -410,8 +410,96 @@ def get_driver(headful: bool = False):
         patcher_force_close=True
     )
     wait = WebDriverWait(driver, 20)
+
+    # Extra realism via CDP (timezone/locale/UA hints + geolocation)
+    try:
+        driver.execute_cdp_cmd("Emulation.setTimezoneOverride", {"timezoneId": "America/Chicago"})
+        driver.execute_cdp_cmd("Emulation.setLocaleOverride", {"locale": "en-US"})
+        driver.execute_cdp_cmd("Network.setUserAgentOverride", {
+            "userAgent": driver.execute_script("return navigator.userAgent"),
+            "acceptLanguage": "en-US,en;q=0.9",
+            "platform": "Windows"
+        })
+        for origin in ("https://dutchie.com", "https://www.dutchie.com"):
+            driver.execute_cdp_cmd("Browser.grantPermissions", {
+                "origin": origin,
+                "permissions": ["geolocation"]
+            })
+        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+            "latitude": 38.4142, "longitude": -88.0039, "accuracy": 50
+        })
+    except Exception:
+        pass
+
     return driver, wait
 
+    
+# ----------------------------^
+# def get_driver(headful: bool = False):
+#     import undetected_chromedriver as uc
+#     from selenium.webdriver.support.ui import WebDriverWait
+
+#     chrome_bin = _find_chrome_binary()
+#     if not chrome_bin:
+#         raise FileNotFoundError(
+#             "No Chrome/Chromium binary found. Install it or set UC_CHROME_BINARY."
+#         )
+
+#     os.environ["UC_CHROME_BINARY"] = chrome_bin
+#     major = _chrome_major(chrome_bin)
+
+#     options = uc.ChromeOptions()
+
+#     # ✅ Let geolocation prompts auto-allow (some menus filter by location)
+#     options.add_experimental_option("prefs", {
+#         "profile.default_content_setting_values.geolocation": 1
+#     })
+
+#     # ✅ Faster DOM “ready” (optional)
+#     try:
+#         options.page_load_strategy = "eager"
+#     except Exception:
+#         pass
+
+#     if headful:
+#         # headed
+#         options.add_argument("--start-maximized")
+#         # keep the window open after the script finishes (nice for local debug)
+#         try:
+#             options.add_experimental_option("detach", True)
+#         except Exception:
+#             pass
+#         # On Linux you often still need these two for containerized runs
+#         options.add_argument("--no-sandbox")
+#         options.add_argument("--disable-dev-shm-usage")
+#     else:
+#         # headless
+#         options.add_argument("--headless=new")
+#         options.add_argument("--no-sandbox")
+#         options.add_argument("--disable-dev-shm-usage")
+#         options.add_argument("--disable-gpu")
+#         options.add_argument("--hide-scrollbars")
+
+#     options.add_argument("--window-size=1920,1080")
+#     options.add_argument("--force-device-scale-factor=1")
+#     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+#     options.add_argument("--disable-blink-features=AutomationControlled")
+#     options.add_argument("--enable-precise-memory-info")
+#     options.add_argument("--disable-extensions")
+#     options.add_argument("--disable-infobars")
+#     options.add_argument(
+#         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+#         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+#     )
+
+#     driver = uc.Chrome(
+#         options=options,
+#         version_main=major,
+#         patcher_force_close=True
+#     )
+#     wait = WebDriverWait(driver, 20)
+#     return driver, wait
+# ----------------------------^
     
 # def get_driver():
 #     """
@@ -1569,6 +1657,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
