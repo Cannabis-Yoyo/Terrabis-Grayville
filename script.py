@@ -188,16 +188,21 @@ def get_driver():
     """
     Headless-safe UC Chrome for Streamlit Cloud / Linux.
     """
-    import os
-    import undetected_chromedriver as uc
     from selenium.webdriver.support.ui import WebDriverWait
+    import undetected_chromedriver as uc
 
-    # On Streamlit Cloud we install chromium via packages.txt
-    # You can also set this in your app before calling get_driver()
-    os.environ.setdefault("UC_CHROME_BINARY", "/usr/bin/chromium")
+    chrome_bin = _find_chrome_binary()
+    if not chrome_bin:
+        st.error(
+            "Chromium/Chrome not found on the system. "
+            "Add a packages.txt with:\n\n"
+            "chromium\nchromium-driver\nfonts-liberation\nlibnss3\n"
+        )
+        st.stop()
+
+    os.environ["UC_CHROME_BINARY"] = chrome_bin
 
     options = uc.ChromeOptions()
-    # — Headless & sandboxing —
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -206,19 +211,60 @@ def get_driver():
     options.add_argument("--force-device-scale-factor=1")
     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
     options.add_argument("--disable-blink-features=AutomationControlled")
-
-    # — Make layout deterministic in headless —
     options.add_argument("--hide-scrollbars")
     options.add_argument("--enable-precise-memory-info")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
-
-    # — Stable UA (helps sites that alter layout for bots) —
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
+
+    major = _chrome_major(chrome_bin)
+
+    driver = uc.Chrome(
+        options=options,
+        version_main=major,          # <-- avoids problematic patcher path
+        patcher_force_close=True
+    )
+    wait = WebDriverWait(driver, 20)
+    return driver, wait
+    
+# def get_driver():
+#     """
+#     Headless-safe UC Chrome for Streamlit Cloud / Linux.
+#     """
+#     import os
+#     import undetected_chromedriver as uc
+#     from selenium.webdriver.support.ui import WebDriverWait
+
+#     # On Streamlit Cloud we install chromium via packages.txt
+#     # You can also set this in your app before calling get_driver()
+#     os.environ.setdefault("UC_CHROME_BINARY", "/usr/bin/chromium")
+
+#     options = uc.ChromeOptions()
+#     # — Headless & sandboxing —
+#     options.add_argument("--headless=new")
+#     options.add_argument("--no-sandbox")
+#     options.add_argument("--disable-dev-shm-usage")
+#     options.add_argument("--disable-gpu")
+#     options.add_argument("--window-size=1920,1080")
+#     options.add_argument("--force-device-scale-factor=1")
+#     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
+#     options.add_argument("--disable-blink-features=AutomationControlled")
+
+#     # — Make layout deterministic in headless —
+#     options.add_argument("--hide-scrollbars")
+#     options.add_argument("--enable-precise-memory-info")
+#     options.add_argument("--disable-extensions")
+#     options.add_argument("--disable-infobars")
+
+#     # — Stable UA (helps sites that alter layout for bots) —
+#     options.add_argument(
+#         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+#         "AppleWebKit/537.36 (KHTML, like Gecko) "
+#         "Chrome/120.0.0.0 Safari/537.36"
+#     )
 
 
     
@@ -1251,6 +1297,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
