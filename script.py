@@ -16,6 +16,30 @@ from openpyxl.utils import get_column_letter # Add this import
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 
+# ---------- Headless helpers ----------
+from selenium.common.exceptions import WebDriverException
+
+def stable_click(driver, elem):
+    """Scroll into view, try normal click, fallback to JS click (headless-safe)."""
+    driver.execute_script("arguments[0].scrollIntoView({block:'center', inline:'center'});", elem)
+    time.sleep(0.2)
+    try:
+        elem.click()
+        return True
+    except WebDriverException:
+        try:
+            driver.execute_script("arguments[0].click();", elem)
+            return True
+        except WebDriverException:
+            return False
+
+def wait_visible(driver, locator, timeout=20):
+    return WebDriverWait(driver, timeout).until(EC.visibility_of_element_located(locator))
+
+def wait_present(driver, locator, timeout=20):
+    return WebDriverWait(driver, timeout).until(EC.presence_of_element_located(locator))
+# --------------------------------------
+
 
 TOKEN_RE = re.compile(r"""
     \d+(?:\.\d+)?            # integer or decimal, e.g. 3 or 3.5
@@ -179,22 +203,36 @@ def clean_thc_value(thc_string):
 
 def handle_age_verification_popup(driver, wait):
     """
-    Handles the age verification pop-up on the Terrabis Grayville Dispensary website.
-    Clicks the "yes, I'm 21 or older" button if the pop-up appears.
+    Close the age verification / popup reliably in headless.
     """
     st.info("Waiting for pop-up to appear and attempting to close it...")
-    time.sleep(4)  # Initial wait to allow the page to load
+    time.sleep(2)
     try:
-        # Wait for the "yes, I'm 21 or older" button to be clickable
-        age_verification_button = wait.until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, "a.pum-close.elementor-element-ebd2f15"))
-        )
-        age_verification_button.click()  # Click the age verification button
+        btn = wait_present(driver, (By.CSS_SELECTOR, "a.pum-close.elementor-element-ebd2f15"), timeout=15)
+        stable_click(driver, btn)
+        time.sleep(1.0)
         print("Pop-up closed successfully!")
-        time.sleep(3)  # Increased delay after closing pop-up to allow page to settle
-    except Exception as popup_e:
-        print(f"Could not find or click the pop-up close button. It might not have appeared or its locator changed. Error: {popup_e}")
-        st.info("Continuing without closing pop-up. You might need to close it manually.")
+    except Exception as e:
+        print(f"Age-gate close not found or already closed: {e}")
+
+# def handle_age_verification_popup(driver, wait):
+#     """
+#     Handles the age verification pop-up on the Terrabis Grayville Dispensary website.
+#     Clicks the "yes, I'm 21 or older" button if the pop-up appears.
+#     """
+#     st.info("Waiting for pop-up to appear and attempting to close it...")
+#     time.sleep(4)  # Initial wait to allow the page to load
+#     try:
+#         # Wait for the "yes, I'm 21 or older" button to be clickable
+#         age_verification_button = wait.until(
+#             EC.element_to_be_clickable((By.CSS_SELECTOR, "a.pum-close.elementor-element-ebd2f15"))
+#         )
+#         age_verification_button.click()  # Click the age verification button
+#         print("Pop-up closed successfully!")
+#         time.sleep(3)  # Increased delay after closing pop-up to allow page to settle
+#     except Exception as popup_e:
+#         print(f"Could not find or click the pop-up close button. It might not have appeared or its locator changed. Error: {popup_e}")
+#         st.info("Continuing without closing pop-up. You might need to close it manually.")
 
 # Define direct links for specific categories
 direct_category_links = {
@@ -240,17 +278,12 @@ def scrape_category(category, driver):
             category_xpath = f"//div[@class='category-slick-content']//h2[text()='{website_category_name}']/ancestor::a"
 
             # Try to find the category link in the current view
-            category_link = driver.find_element(By.XPATH, category_xpath)
-            
-            # If found, try to click it (with explicit wait for clickability)
-            category_link = wait.until(
-                EC.element_to_be_clickable((By.XPATH, category_xpath))
-            )
-
-            driver.execute_script("arguments[0].scrollIntoView(true);", category_link)
-            time.sleep(1) # Small pause after scrolling to ensure visibility
-
-            category_link.click()
+            category_link = wait_visible(driver, (By.XPATH, category_xpath))
+            if not stable_click(driver, category_link):
+                st.warning("Category click fallback retry...")
+                time.sleep(0.6)
+                category_link = wait_visible(driver, (By.XPATH, category_xpath))
+                stable_click(driver, category_link)
             print(f"Successfully selected category '{category}' on the website.")
             st.success(f"Category '{category}' found and selected.")
             time.sleep(3) # Give some time for the new category page to load
@@ -266,34 +299,54 @@ def scrape_category(category, driver):
             for attempt in range(next_button_click_attempts):
                 try:
                     # Locate the "Next" button
-                    next_button = wait.until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, "button.slick-next.slick-arrow[aria-label='Next'][type='button']"))
-                    )
-                    
-                    # Check if the button is disabled
+                    next_button = wait_visible(driver, (By.CSS_SELECTOR, "button.slick-next.slick-arrow[aria-label='Next'][type='button']"))
+                    # Check disabled state
                     if next_button.get_attribute("aria-disabled") == "true":
                         print("Reached the end of categories, 'Next' button is disabled.")
                         st.warning("Reached the end of categories, desired category not found.")
-                        category_found = False # Ensure loop terminates
-                        return False # Exit early if no more categories
+                        category_found = False
+                        return False
                     
-                    # Scroll the button into view to ensure it's actionable
-                    driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
-                    time.sleep(1) # Small pause after scrolling
-                    
-                    # Get the initial transform style of the slick-track before clicking
-                    slick_track = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".slick-track")))
+                    # Ensure in view
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", next_button)
+                    time.sleep(0.2)
+                    # Track carousel movement
+                    slick_track = wait_present(driver, (By.CSS_SELECTOR, ".slick-track"))
                     initial_transform = slick_track.get_attribute("style")
                     
-                    # Attempt JavaScript click
-                    driver.execute_script("arguments[0].click();", next_button)
+                    stable_click(driver, next_button)
+                    WebDriverWait(driver, 10).until(
+                        lambda d: d.find_element(By.CSS_SELECTOR, ".slick-track").get_attribute("style") != initial_transform
+                    )
+                    time.sleep(0.6)
+                    # next_button = wait.until(
+                    #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button.slick-next.slick-arrow[aria-label='Next'][type='button']"))
+                    # )
                     
-                    clicked_next_count += 1
-                    print(f"Clicked 'Next' button. Attempt {clicked_next_count}/{max_next_clicks}. Click retry: {attempt + 1}/{next_button_click_attempts}")
+                    # # Check if the button is disabled
+                    # if next_button.get_attribute("aria-disabled") == "true":
+                    #     print("Reached the end of categories, 'Next' button is disabled.")
+                    #     st.warning("Reached the end of categories, desired category not found.")
+                    #     category_found = False # Ensure loop terminates
+                    #     return False # Exit early if no more categories
                     
-                    # IMPORTANT: Wait for the 'transform' style of the slick-track to change
-                    # This indicates the carousel has actually moved.
-                    wait.until(lambda d: d.find_element(By.CSS_SELECTOR, ".slick-track").get_attribute("style") != initial_transform)
+                    # # Scroll the button into view to ensure it's actionable
+                    # driver.execute_script("arguments[0].scrollIntoView(true);", next_button)
+                    # time.sleep(1) # Small pause after scrolling
+                    
+                    # # Get the initial transform style of the slick-track before clicking
+                    # slick_track = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".slick-track")))
+                    # initial_transform = slick_track.get_attribute("style")
+                    
+                    # # Attempt JavaScript click
+                    # driver.execute_script("arguments[0].click();", next_button)
+                    
+                    # clicked_next_count += 1
+                    # print(f"Clicked 'Next' button. Attempt {clicked_next_count}/{max_next_clicks}. Click retry: {attempt + 1}/{next_button_click_attempts}")
+                    
+                    # # IMPORTANT: Wait for the 'transform' style of the slick-track to change
+                    # # This indicates the carousel has actually moved.
+                    # wait.until(lambda d: d.find_element(By.CSS_SELECTOR, ".slick-track").get_attribute("style") != initial_transform)
                     
                     time.sleep(2) # Additional brief pause after content update and carousel movement
                     break # Break from the retry loop if click was successful and content updated
@@ -365,10 +418,10 @@ def scrape_brand(brand, driver):
             if target_text in label_text:
                 cb = driver.find_element(By.CSS_SELECTOR, f"input[id='{lbl.get_attribute('for')}']")
                 if not cb.is_selected():
-                    # 🔑 scroll before clicking
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", lbl)
-                    time.sleep(1)
-                    cb.click()
+                    time.sleep(0.2)
+                    # click the label instead of the input (headless-safe)
+                    stable_click(driver, lbl)
                     print(f"✔ Selected brand (direct): {lbl.text}")
                 else:
                     print(f"ℹ️ Already selected (direct): {lbl.text}")
@@ -408,13 +461,11 @@ def scrape_brand(brand, driver):
             if brand_name_on_website.lower() in label.text.lower():  # Case-insensitive match
                 brand_for_attr = label.get_attribute("for")
                 brand_checkbox = driver.find_element(By.CSS_SELECTOR, f"input[id='{brand_for_attr}']")
-                
-                # Check if the brand checkbox is not selected, and if not, click it
                 if not brand_checkbox.is_selected():
-                     # 🔑 scroll before clicking
                     driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", label)
-                    time.sleep(1)
-                    brand_checkbox.click()  # Click the checkbox for the brand
+                    time.sleep(0.2)
+                    # click the label (more reliable in headless)
+                    stable_click(driver, label)
                     print(f"✔ Selected brand: {label.text}")
                 else:
                     print(f"✔ Brand '{label.text}' is already selected.")
@@ -504,7 +555,7 @@ def scrape_weight(weight, driver):
             # try each of our variants (with and without leading zero)
             for v in variants:
                 if v in link_text:
-                    link.click()
+                    stable_click(driver, link)
                     print(f"✔ Selected weight: {link_text}")
                     return True
 
@@ -519,7 +570,7 @@ def scrape_weight(weight, driver):
         for link in weight_links:
             link_text = link.text.strip().lower()
             if weight_in_ounces in link_text:
-                link.click()  # Click the weight link
+                stable_click(driver, link)
                 print(f"✔ Selected weight in ounces: {link_text}")
                 return True
 
@@ -744,47 +795,48 @@ if uploaded_file:
         # Loop through the brands and select them
         for row_index, row in filtered_data.iterrows():
             # Reload the category page so all filters are cleared
+            driver.switch_to.default_content()
             driver.get(category_url)
+
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
             try:
-                # Add a small delay to ensure the iframe element is rendered in the DOM
-                time.sleep(3) # Adjust if needed, allows page to compose elements
-
-                # Wait for the iframe to be present and then switch to it
-                iframe = WebDriverWait(driver, 15).until( # Increased timeout for iframe wait
+                time.sleep(2)
+            
+                iframe = WebDriverWait(driver, 20).until(
                     EC.presence_of_element_located((By.ID, "dutchie--embed__iframe"))
                 )
+                # Wait until src is set and not about:blank to avoid early switch
+                WebDriverWait(driver, 20).until(
+                    lambda d: iframe.get_attribute("src") and "about:blank" not in iframe.get_attribute("src")
+                )
+            
                 driver.switch_to.frame(iframe)
                 st.info(f"Switched to Dutchie iframe for row {row_index}.")
-
-                # Now that we are inside the iframe, wait for the product list items
-                # This replaces the original WebDriverWait at line ~622
-                WebDriverWait(driver, 20).until(
+            
+                # Wait for at least one product tile
+                WebDriverWait(driver, 25).until(
                     EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']"))
                 )
-                time.sleep(3) # Small wait after products load within the iframe
-
+                time.sleep(1.0)
+            
             except TimeoutException as e:
                 st.error(f"Timed out waiting for iframe or product elements inside iframe for row {row_index}. Error: {e}")
-                # Save empty values to Excel for this row if a timeout occurs
                 save_data_to_file(row_index, " ", " ", " ", " ")
-                # Attempt to switch back to default content before continuing to next row
                 try:
                     driver.switch_to.default_content()
                 except Exception as ex:
                     print(f"Error switching to default content after iframe timeout: {ex}")
-                continue # Skip to next iteration
-
+                continue
+            
             except Exception as e:
                 st.error(f"An unexpected error occurred while processing iframe or products for row {row_index}: {e}")
-                # Save empty values to Excel for this row if an unexpected error occurs
                 save_data_to_file(row_index, " ", " ", " ", " ")
-                # Attempt to switch back to default content before continuing to next row
                 try:
                     driver.switch_to.default_content()
                 except Exception as ex:
                     print(f"Error switching to default content after unexpected iframe error: {ex}")
-                continue # Skip to next iteration
+                continue
+
             # --- END NEW CODE BLOCK ---
 
             # Extract the relevant data
@@ -1140,3 +1192,4 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
