@@ -175,7 +175,7 @@ def scroll_filter_panel_to_find_label(driver, brand_text, max_scrolls=30):
 
     return False
 
-# ---- Build/open Terrabis URL with category + optional brand ----
+# ---- URL helpers to pre-filter brand/category on Terrabis ----
 category_slug_map = {
     "Edibles": "edibles",
     "Flower": "flower",
@@ -201,22 +201,25 @@ def slugify_brand_for_param(name: str | None) -> str | None:
 def build_terrabis_url(city_slug: str, category_site_name: str, brand_site_name: str | None) -> str:
     cat_slug = category_slug_map.get(category_site_name, category_site_name.lower())
     base = f"https://terrabis.co/order-online/{city_slug}/"
-    params = {"dtche[category]": cat_slug, "dtche[sortby]": "relevance"}
+    params = {
+        "dtche[category]": cat_slug,
+        "dtche[sortby]": "relevance",
+    }
     bslug = slugify_brand_for_param(brand_site_name)
-    if bslug:
+    if bslug:  # include brand only when provided
         params["dtche[brands]"] = bslug
     return f"{base}?{urlencode(params)}"
 
 def open_terrabis_with_brand(driver, wait, city_slug: str, category_site_name: str, brand_site_name: str | None, row_index: int) -> bool:
     """
-    Navigate to Terrabis with category (+ optional brand) pre-applied.
+    Navigate to Terrabis with category (+ optional brand) applied via query params.
     Stay on Terrabis, switch into the Dutchie iframe, and wait for product tiles.
     """
     url = build_terrabis_url(city_slug, category_site_name, brand_site_name)
     driver.switch_to.default_content()
     driver.get(url)
 
-    # Close the age gate if it shows
+    # Close age gate on host page
     try:
         handle_age_verification_popup(driver, wait)
     except Exception:
@@ -232,9 +235,9 @@ def open_terrabis_with_brand(driver, wait, city_slug: str, category_site_name: s
         WebDriverWait(driver, 25).until(EC.frame_to_be_available_and_switch_to_it(iframe))
         st.info(f"Switched to Dutchie iframe for row {row_index}.")
 
-        # settle & optional cookie
+        # settle + optional cookie
         try:
-            WebDriverWait(driver, 10).until(lambda d: d.execute_script("return document.readyState") in ("interactive","complete"))
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
         except Exception:
             pass
         try:
@@ -246,6 +249,7 @@ def open_terrabis_with_brand(driver, wait, city_slug: str, category_site_name: s
         except Exception:
             pass
 
+        # wait for tiles
         WebDriverWait(driver, 35).until(EC.any_of(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']"))
@@ -257,12 +261,13 @@ def open_terrabis_with_brand(driver, wait, city_slug: str, category_site_name: s
         st.error(f"Timed out waiting for filtered Dutchie embed for row {row_index}. Error: {e}")
         try:
             driver.switch_to.default_content()
-            frames = driver.find_elements(By.TAGNAME, "iframe")
+            frames = driver.find_elements(By.TAG_NAME, "iframe")
             st.write("Iframes on Terrabis page:", [f.get_attribute("src") for f in frames])
             st.image(driver.get_screenshot_as_png(), caption="Terrabis page at timeout", use_container_width=True)
         except Exception:
             pass
         return False
+
 
 def open_dutchie_menu(driver, wait, timeout=60):
     """
@@ -1280,116 +1285,116 @@ if uploaded_file:
 
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
-            try:
-                time.sleep(1.0)
+            # try:
+            #     time.sleep(1.0)
             
-                # Find the Dutchie iframe (and capture its src for a fallback)
-                iframe = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((
-                        By.CSS_SELECTOR,
-                        "iframe#dutchie--embed__iframe, iframe[id*='dutchie'], iframe[src*='dutchie.com']"
-                    ))
-                )
-                iframe_src = iframe.get_attribute("src") or ""
-                WebDriverWait(driver, 10).until(lambda d: iframe.get_attribute("src") and "about:blank" not in iframe.get_attribute("src"))
+            #     # Find the Dutchie iframe (and capture its src for a fallback)
+            #     iframe = WebDriverWait(driver, 15).until(
+            #         EC.presence_of_element_located((
+            #             By.CSS_SELECTOR,
+            #             "iframe#dutchie--embed__iframe, iframe[id*='dutchie'], iframe[src*='dutchie.com']"
+            #         ))
+            #     )
+            #     iframe_src = iframe.get_attribute("src") or ""
+            #     WebDriverWait(driver, 10).until(lambda d: iframe.get_attribute("src") and "about:blank" not in iframe.get_attribute("src"))
             
-                # Try switching INTO the iframe first
-                try:
-                    WebDriverWait(driver, 15).until(EC.frame_to_be_available_and_switch_to_it(iframe))
-                    st.info(f"Switched to Dutchie iframe for row {row_index}.")
+            #     # Try switching INTO the iframe first
+            #     try:
+            #         WebDriverWait(driver, 15).until(EC.frame_to_be_available_and_switch_to_it(iframe))
+            #         st.info(f"Switched to Dutchie iframe for row {row_index}.")
             
-                    # DOM ready, then wait for products
-                    WebDriverWait(driver, 15).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+            #         # DOM ready, then wait for products
+            #         WebDriverWait(driver, 15).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
             
-                    # Close cookie/banner if it appears
-                    try:
-                        cookie_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((
-                            By.XPATH,
-                            "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
-                        )))
-                        stable_click(driver, cookie_btn)
-                        time.sleep(0.4)
-                    except Exception:
-                        pass
+            #         # Close cookie/banner if it appears
+            #         try:
+            #             cookie_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((
+            #                 By.XPATH,
+            #                 "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
+            #             )))
+            #             stable_click(driver, cookie_btn)
+            #             time.sleep(0.4)
+            #         except Exception:
+            #             pass
             
-                    # Wait for product tiles (several possible selectors)
-                    WebDriverWait(driver, 25).until(EC.any_of(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']")),
-                        EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'product') and (contains(@class,'card') or contains(@class,'item'))]"))
-                    ))
-                    time.sleep(0.8)  # let prices/options hydrate
+            #         # Wait for product tiles (several possible selectors)
+            #         WebDriverWait(driver, 25).until(EC.any_of(
+            #             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
+            #             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']")),
+            #             EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'product') and (contains(@class,'card') or contains(@class,'item'))]"))
+            #         ))
+            #         time.sleep(0.8)  # let prices/options hydrate
             
-                except TimeoutException:
-                    # Fallback: open the Dutchie menu directly (avoids headless iframe issues)
-                    driver.switch_to.default_content()
-                    if not iframe_src:
-                        raise  # no URL to open; let outer handler catch
+            #     except TimeoutException:
+            #         # Fallback: open the Dutchie menu directly (avoids headless iframe issues)
+            #         driver.switch_to.default_content()
+            #         if not iframe_src:
+            #             raise  # no URL to open; let outer handler catch
             
-                    st.info("Iframe slow/blocked; opening Dutchie menu directly.")
-                    driver.get(iframe_src)
+            #         st.info("Iframe slow/blocked; opening Dutchie menu directly.")
+            #         driver.get(iframe_src)
             
-                    # Grant geo on dutchie.com (helps some locations)
-                    try:
-                        driver.execute_cdp_cmd("Browser.grantPermissions", {
-                            "origin": "https://dutchie.com",
-                            "permissions": ["geolocation"]
-                        })
-                        # Grayville-ish (adjust if you like)
-                        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
-                            "latitude": 38.4142, "longitude": -88.0039, "accuracy": 50
-                        })
-                    except Exception:
-                        pass
+            #         # Grant geo on dutchie.com (helps some locations)
+            #         try:
+            #             driver.execute_cdp_cmd("Browser.grantPermissions", {
+            #                 "origin": "https://dutchie.com",
+            #                 "permissions": ["geolocation"]
+            #             })
+            #             # Grayville-ish (adjust if you like)
+            #             driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+            #                 "latitude": 38.4142, "longitude": -88.0039, "accuracy": 50
+            #             })
+            #         except Exception:
+            #             pass
             
-                    WebDriverWait(driver, 20).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+            #         WebDriverWait(driver, 20).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
             
-                    # Close cookie/banner if present
-                    try:
-                        cookie_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((
-                            By.XPATH,
-                            "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
-                        )))
-                        stable_click(driver, cookie_btn)
-                        time.sleep(0.4)
-                    except Exception:
-                        pass
+            #         # Close cookie/banner if present
+            #         try:
+            #             cookie_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((
+            #                 By.XPATH,
+            #                 "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
+            #             )))
+            #             stable_click(driver, cookie_btn)
+            #             time.sleep(0.4)
+            #         except Exception:
+            #             pass
             
-                    # Wait for product tiles on the full dutchie page
-                    WebDriverWait(driver, 30).until(EC.any_of(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']"))
-                    ))
-                    time.sleep(0.8)
+            #         # Wait for product tiles on the full dutchie page
+            #         WebDriverWait(driver, 30).until(EC.any_of(
+            #             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
+            #             EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']"))
+            #         ))
+            #         time.sleep(0.8)
             
-            except TimeoutException as e:
-                st.error(f"Timed out waiting for Dutchie menu for row {row_index}. Error: {e}")
+            # except TimeoutException as e:
+            #     st.error(f"Timed out waiting for Dutchie menu for row {row_index}. Error: {e}")
             
-                # Debug helpers
-                try:
-                    driver.switch_to.default_content()
-                    iframes = driver.find_elements(By.TAG_NAME, "iframe")
-                    st.write("Iframes on page:", [f.get_attribute("src") for f in iframes])
-                    st.image(driver.get_screenshot_as_png(), caption="Screenshot at timeout", use_container_width=True)
-                except Exception:
-                    pass
+            #     # Debug helpers
+            #     try:
+            #         driver.switch_to.default_content()
+            #         iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            #         st.write("Iframes on page:", [f.get_attribute("src") for f in iframes])
+            #         st.image(driver.get_screenshot_as_png(), caption="Screenshot at timeout", use_container_width=True)
+            #     except Exception:
+            #         pass
             
-                save_data_to_file(row_index, " ", " ", " ", " ")
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
-                continue
+            #     save_data_to_file(row_index, " ", " ", " ", " ")
+            #     try:
+            #         driver.switch_to.default_content()
+            #     except Exception:
+            #         pass
+            #     continue
             
-            except Exception as e:
-                st.error(f"Unexpected error while entering Dutchie for row {row_index}: {e}")
-                save_data_to_file(row_index, " ", " ", " ", " ")
-                try:
-                    driver.switch_to.default_content()
-                except Exception:
-                    pass
-                continue
-            # --- END NEW CODE BLOCK ---
+            # except Exception as e:
+            #     st.error(f"Unexpected error while entering Dutchie for row {row_index}: {e}")
+            #     save_data_to_file(row_index, " ", " ", " ", " ")
+            #     try:
+            #         driver.switch_to.default_content()
+            #     except Exception:
+            #         pass
+            #     continue
+            # # --- END NEW CODE BLOCK ---
 
 
 
@@ -1418,24 +1423,32 @@ if uploaded_file:
             mapped_brand = brand_mapping.get(brand, brand)
             
             if website_cat in no_brand_categories:
-                # No brand facet on site; nothing to select here.
-                print(f"⏭ Skipping brand selection for category '{website_cat}' (no brands on site).")
-                brand_successfully_selected = True
+                # no brand facet on site: still open category page and switch into iframe
+                st.info(f"Opening category via URL: {website_cat} (no brand facet).")
+                brand_successfully_selected = open_terrabis_with_brand(
+                    driver, wait,
+                    city_slug="grayville",
+                    category_site_name=website_cat,
+                    brand_site_name=None,          # no brand param
+                    row_index=row_index
+                )
             else:
-                # 1) Try your existing UI search strategy inside the iframe
-                print(f"Selecting brand via UI search: {mapped_brand}")
-                brand_successfully_selected = scrape_brand(brand, driver)  # scrape_brand does its own mapping
+                # use URL-driven brand filter first
+                st.info(f"Applying brand via URL: {mapped_brand} in {website_cat}")
+                brand_successfully_selected = open_terrabis_with_brand(
+                    driver, wait,
+                    city_slug="grayville",
+                    category_site_name=website_cat,
+                    brand_site_name=mapped_brand,  # mapped name → slug
+                    row_index=row_index
+                )
             
-                # 2) If UI search fails, use your idea: reload Terrabis with the brand in the URL
+                # optional UI fallback if URL approach failed
                 if not brand_successfully_selected:
-                    st.warning("Brand not found via search; applying URL fallback…")
-                    brand_successfully_selected = open_terrabis_with_brand(
-                        driver, wait,
-                        city_slug="grayville",
-                        category_site_name=website_cat,
-                        brand_site_name=mapped_brand,   # mapped brand → slug
-                        row_index=row_index
-                    )
+                    st.warning("URL brand filter failed; trying UI brand filter.")
+                    driver.switch_to.default_content()
+                    driver.get(category_url)
+                    brand_successfully_selected = scrape_brand(brand, driver)
 
 
             # --- WEIGHT SELECTION (CONDITIONAL) ---
