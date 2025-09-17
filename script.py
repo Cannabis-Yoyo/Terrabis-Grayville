@@ -11,18 +11,32 @@ except Exception:
         # Good enough for uc which accesses [0] for major.
         return re.split(r"[^\w]+", v.strip())  # split on dots/dashes, keep digits/letters
 
-    class LooseVersion(str):
-        # Minimal drop-in: has `.version` and supports comparisons
-        def __new__(cls, v):
-            obj = str.__new__(cls, v)
-            obj.version = [p for p in _parts_list(str(v)) if p != ""]
-            return obj
-        def _v(self): return _PV(str(self))
-        def __lt__(self, o): return self._v() <  _PV(str(o))
-        def __le__(self, o): return self._v() <= _PV(str(o))
-        def __gt__(self, o): return self._v() >  _PV(str(o))
-        def __ge__(self, o): return self._v() >= _PV(str(o))
-        def __eq__(self, o): return self._v() == _PV(str(o))
+class LooseVersion(str):
+    # Minimal drop-in: has `.version` (list) and `.vstring` (str), supports comparisons
+    def __new__(cls, v):
+        obj = str.__new__(cls, v)
+        # make version items ints when possible (UC uses version[0])
+        parts = [p for p in _parts_list(str(v)) if p != ""]
+        def _cast(x):
+            try:
+                return int(x)
+            except Exception:
+                return x
+        obj.version = [_cast(p) for p in parts]
+        return obj
+
+    @property
+    def vstring(self):
+        return str(self)
+
+    def _v(self): 
+        return _PV(str(self))
+
+    def __lt__(self, o): return self._v() <  _PV(str(o))
+    def __le__(self, o): return self._v() <= _PV(str(o))
+    def __gt__(self, o): return self._v() >  _PV(str(o))
+    def __ge__(self, o): return self._v() >= _PV(str(o))
+    def __eq__(self, o): return self._v() == _PV(str(o))
 
     dv = types.ModuleType("distutils")
     dv_version = types.ModuleType("distutils.version")
@@ -54,17 +68,16 @@ from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 import os, subprocess, re
 
+import os, subprocess, re
+
 def _find_chrome_binary():
     env = os.environ.get("UC_CHROME_BINARY")
     if env and os.path.exists(env):
         return env
-    candidates = [
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-    ]
-    for p in candidates:
+    for p in ("/usr/bin/chromium",
+              "/usr/bin/chromium-browser",
+              "/usr/bin/google-chrome",
+              "/usr/bin/google-chrome-stable"):
         if os.path.exists(p):
             return p
     return None
@@ -211,22 +224,17 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
         st.error(f"Error saving data to Excel for row {row_index}: {e}")
 
 def get_driver():
-    """
-    Headless-safe UC Chrome for Streamlit Cloud / Linux.
-    """
-    from selenium.webdriver.support.ui import WebDriverWait
     import undetected_chromedriver as uc
+    from selenium.webdriver.support.ui import WebDriverWait
 
     chrome_bin = _find_chrome_binary()
     if not chrome_bin:
-        st.error(
-            "Chromium/Chrome not found on the system. "
-            "Add a packages.txt with:\n\n"
-            "chromium\nchromium-driver\nfonts-liberation\nlibnss3\n"
+        raise FileNotFoundError(
+            "No Chrome/Chromium binary found. Install via packages.txt (chromium, chromium-driver) "
+            "or set UC_CHROME_BINARY to the absolute path."
         )
-        st.stop()
 
-    os.environ["UC_CHROME_BINARY"] = chrome_bin
+    os.environ["UC_CHROME_BINARY"] = chrome_bin  # let UC know which browser to launch
 
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
@@ -246,13 +254,7 @@ def get_driver():
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    major = _chrome_major(chrome_bin)
-
-    driver = uc.Chrome(
-        options=options,
-        version_main=major,          # <-- avoids problematic patcher path
-        patcher_force_close=True
-    )
+    driver = uc.Chrome(options=options)
     wait = WebDriverWait(driver, 20)
     return driver, wait
     
@@ -1323,6 +1325,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
