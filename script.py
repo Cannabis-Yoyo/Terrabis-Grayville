@@ -52,7 +52,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter # Add this import
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
-
+import os, subprocess, re
 # ---------- Headless helpers ----------
 from selenium.common.exceptions import WebDriverException
 
@@ -220,7 +220,27 @@ def get_driver():
         "Chrome/120.0.0.0 Safari/537.36"
     )
 
-    driver = uc.Chrome(options=options)
+
+    
+    def _chromium_major():
+        # Works on Streamlit Cloud when 'chromium' is installed via packages.txt
+        try:
+            out = subprocess.check_output(["/usr/bin/chromium", "--version"]).decode()
+        except Exception:
+            # Fallback path name some images use
+            out = subprocess.check_output(["chromium", "--version"]).decode()
+        # e.g., "Chromium 120.0.6099.224"
+        m = re.search(r"(\d+)\.", out)
+        return int(m.group(1)) if m else 120
+    
+    os.environ.setdefault("UC_CHROME_BINARY", "/usr/bin/chromium")
+    major = _chromium_major()
+    
+    driver = uc.Chrome(
+        options=options,
+        version_main=major,          # ← tell UC which Chrome we're using
+        patcher_force_close=True     # ← safer cleanup
+    )
     wait = WebDriverWait(driver, 20)
     return driver, wait
 
@@ -1231,6 +1251,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
