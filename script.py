@@ -175,6 +175,71 @@ def scroll_filter_panel_to_find_label(driver, brand_text, max_scrolls=30):
 
     return False
 
+def open_dutchie_menu(driver, wait, timeout=60):
+    """
+    Robustly enter the Dutchie menu.
+    Strategy:
+      1. Try to find the Dutchie iframe and switch to it when ready.
+      2. If switching is flaky, navigate directly to iframe src (best in headless).
+      3. As we wait, keep closing the age gate and scrolling to trigger lazy load.
+    Returns: "frame" if switched into iframe, "direct" if navigated to src.
+    Raises: TimeoutException on failure.
+    """
+    import time
+    end = time.time() + timeout
+    last_err = None
+
+    # helpful: try to clear overlays repeatedly while we wait
+    def _nudge_page():
+        try:
+            handle_age_verification_popup(driver, wait)
+        except Exception:
+            pass
+        try:
+            driver.execute_script("window.scrollBy(0, 800);")
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    while time.time() < end:
+        _nudge_page()
+
+        # 1) try to find the iframe
+        iframes = driver.find_elements(By.CSS_SELECTOR, "iframe[id^='dutchie--embed'], iframe[src*='dutchie']")
+        if iframes:
+            iframe = iframes[0]
+            try:
+                # if src is set and not about:blank, directly navigate (more reliable)
+                src = iframe.get_attribute("src")
+                if src and "about:blank" not in src:
+                    try:
+                        driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    driver.get(src)
+                    return "direct"
+
+                # otherwise, try switching into the frame and let it render
+                wait.until(EC.frame_to_be_available_and_switch_to_it(iframe))
+                return "frame"
+            except Exception as e:
+                last_err = e
+
+        time.sleep(0.5)
+
+    # dump a little debug info to logs before failing
+    try:
+        frames_info = driver.execute_script(
+            "return Array.from(document.querySelectorAll('iframe'))"
+            ".map(f=>({id:f.id, src:f.src}));"
+        )
+        print("IFRAME DEBUG:", frames_info)
+    except Exception:
+        pass
+
+    from selenium.common.exceptions import TimeoutException
+    raise TimeoutException(f"Dutchie iframe/src not ready. Last error: {last_err}")
+
 
 TOKEN_RE = re.compile(r"""
     \d+(?:\.\d+)?            # integer or decimal, e.g. 3 or 3.5
@@ -296,6 +361,18 @@ def get_driver(headful: bool = False):
     major = _chrome_major(chrome_bin)
 
     options = uc.ChromeOptions()
+
+    # ✅ Let geolocation prompts auto-allow (some menus filter by location)
+    options.add_experimental_option("prefs", {
+        "profile.default_content_setting_values.geolocation": 1
+    })
+
+    # ✅ Faster DOM “ready” (optional)
+    try:
+        options.page_load_strategy = "eager"
+    except Exception:
+        pass
+
     if headful:
         # headed
         options.add_argument("--start-maximized")
@@ -334,6 +411,7 @@ def get_driver(headful: bool = False):
     )
     wait = WebDriverWait(driver, 20)
     return driver, wait
+
     
 # def get_driver():
 #     """
@@ -1024,45 +1102,36 @@ if uploaded_file:
             driver.get(category_url)
 
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
+            # --- NEW: robust Dutchie entry & product wait ---
             try:
-                time.sleep(2)
+                # We are on the category page (you already navigated to category_url above)
+                mode = open_dutchie_menu(driver, wait, timeout=60)
+                st.info(f"{'Navigated to Dutchie src' if mode=='direct' else 'Switched into Dutchie iframe'} for row {row_index}.")
             
-                iframe = WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.ID, "dutchie--embed__iframe"))
-                )
-                # Wait until src is set and not about:blank to avoid early switch
-                WebDriverWait(driver, 20).until(
-                    lambda d: iframe.get_attribute("src") and "about:blank" not in iframe.get_attribute("src")
-                )
-            
-                driver.switch_to.frame(iframe)
-                st.info(f"Switched to Dutchie iframe for row {row_index}.")
-            
-                # Wait for at least one product tile
-                WebDriverWait(driver, 25).until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']"))
+                # Wait for the product tiles to render (same CSS whether in iframe or at dutchie src)
+                WebDriverWait(driver, 40).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']"))
                 )
                 time.sleep(1.0)
             
             except TimeoutException as e:
-                st.error(f"Timed out waiting for iframe or product elements inside iframe for row {row_index}. Error: {e}")
+                st.error(f"Timed out waiting for Dutchie menu for row {row_index}. Error: {e}")
                 save_data_to_file(row_index, " ", " ", " ", " ")
                 try:
                     driver.switch_to.default_content()
-                except Exception as ex:
-                    print(f"Error switching to default content after iframe timeout: {ex}")
+                except Exception:
+                    pass
                 continue
             
             except Exception as e:
-                st.error(f"An unexpected error occurred while processing iframe or products for row {row_index}: {e}")
+                st.error(f"Unexpected error entering Dutchie for row {row_index}: {e}")
                 save_data_to_file(row_index, " ", " ", " ", " ")
                 try:
                     driver.switch_to.default_content()
-                except Exception as ex:
-                    print(f"Error switching to default content after unexpected iframe error: {ex}")
+                except Exception:
+                    pass
                 continue
-
-            # --- END NEW CODE BLOCK ---
+            # --- END NEW ---
 
             # Extract the relevant data
             selected_category = row['Category']
@@ -1417,6 +1486,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
