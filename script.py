@@ -319,6 +319,8 @@ def scrape_category(category, driver):
                         lambda d: d.find_element(By.CSS_SELECTOR, ".slick-track").get_attribute("style") != initial_transform
                     )
                     time.sleep(0.6)
+                    
+                    clicked_next_count += 1  # <-- add this line so the outer loop progresses
                     # next_button = wait.until(
                     #     EC.element_to_be_clickable((By.CSS_SELECTOR, "button.slick-next.slick-arrow[aria-label='Next'][type='button']"))
                     # )
@@ -1192,4 +1194,5 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
