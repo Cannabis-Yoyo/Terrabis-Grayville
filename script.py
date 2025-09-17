@@ -63,8 +63,8 @@ from openpyxl.utils import get_column_letter # Add this import
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 import os, subprocess, re
-
-import os, subprocess, re
+from urllib.parse import urlencode
+# import os, subprocess, re
 
 def _find_chrome_binary():
     env = os.environ.get("UC_CHROME_BINARY")
@@ -174,6 +174,95 @@ def scroll_filter_panel_to_find_label(driver, brand_text, max_scrolls=30):
         time.sleep(0.4)
 
     return False
+
+# ---- Build/open Terrabis URL with category + optional brand ----
+category_slug_map = {
+    "Edibles": "edibles",
+    "Flower": "flower",
+    "Vaporizers": "vaporizers",
+    "Concentrates": "concentrates",
+    "Topicals": "topicals",
+    "Pre-Rolls": "pre-rolls",
+    "Tinctures": "tinctures",
+    "Apparel": "apparel",
+    "Accessories": "accessories",
+}
+
+def slugify_brand_for_param(name: str | None) -> str | None:
+    if not name:
+        return None
+    s = name.lower()
+    s = s.replace("&", " and ")
+    s = s.replace("’", "").replace("'", "").replace("`", "")
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = re.sub(r"-+", "-", s).strip("-")
+    return s
+
+def build_terrabis_url(city_slug: str, category_site_name: str, brand_site_name: str | None) -> str:
+    cat_slug = category_slug_map.get(category_site_name, category_site_name.lower())
+    base = f"https://terrabis.co/order-online/{city_slug}/"
+    params = {"dtche[category]": cat_slug, "dtche[sortby]": "relevance"}
+    bslug = slugify_brand_for_param(brand_site_name)
+    if bslug:
+        params["dtche[brands]"] = bslug
+    return f"{base}?{urlencode(params)}"
+
+def open_terrabis_with_brand(driver, wait, city_slug: str, category_site_name: str, brand_site_name: str | None, row_index: int) -> bool:
+    """
+    Navigate to Terrabis with category (+ optional brand) pre-applied.
+    Stay on Terrabis, switch into the Dutchie iframe, and wait for product tiles.
+    """
+    url = build_terrabis_url(city_slug, category_site_name, brand_site_name)
+    driver.switch_to.default_content()
+    driver.get(url)
+
+    # Close the age gate if it shows
+    try:
+        handle_age_verification_popup(driver, wait)
+    except Exception:
+        pass
+
+    try:
+        iframe = WebDriverWait(driver, 25).until(
+            EC.presence_of_element_located((
+                By.CSS_SELECTOR,
+                "iframe#dutchie--embed__iframe, iframe[id*='dutchie'], iframe[src*='dutchie.com/embedded-menu']"
+            ))
+        )
+        WebDriverWait(driver, 25).until(EC.frame_to_be_available_and_switch_to_it(iframe))
+        st.info(f"Switched to Dutchie iframe for row {row_index}.")
+
+        # settle & optional cookie
+        try:
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("return document.readyState") in ("interactive","complete"))
+        except Exception:
+            pass
+        try:
+            cookie_btn = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((
+                By.XPATH, "//button[normalize-space()='Accept' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
+            )))
+            stable_click(driver, cookie_btn)
+            time.sleep(0.4)
+        except Exception:
+            pass
+
+        WebDriverWait(driver, 35).until(EC.any_of(
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
+            EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']"))
+        ))
+        time.sleep(0.8)
+        return True
+
+    except TimeoutException as e:
+        st.error(f"Timed out waiting for filtered Dutchie embed for row {row_index}. Error: {e}")
+        try:
+            driver.switch_to.default_content()
+            frames = driver.find_elements(By.TAGNAME, "iframe")
+            st.write("Iframes on Terrabis page:", [f.get_attribute("src") for f in frames])
+            st.image(driver.get_screenshot_as_png(), caption="Terrabis page at timeout", use_container_width=True)
+        except Exception:
+            pass
+        return False
 
 def open_dutchie_menu(driver, wait, timeout=60):
     """
@@ -1326,12 +1415,28 @@ if uploaded_file:
 
             # Decide whether we need to select a brand
             website_cat = category_mapping.get(selected_category, selected_category)
+            mapped_brand = brand_mapping.get(brand, brand)
+            
             if website_cat in no_brand_categories:
+                # No brand facet on site; nothing to select here.
                 print(f"⏭ Skipping brand selection for category '{website_cat}' (no brands on site).")
                 brand_successfully_selected = True
             else:
-                print(f"Selecting brand: {brand}")
-                brand_successfully_selected = scrape_brand(brand, driver) # Capture the return value here
+                # 1) Try your existing UI search strategy inside the iframe
+                print(f"Selecting brand via UI search: {mapped_brand}")
+                brand_successfully_selected = scrape_brand(brand, driver)  # scrape_brand does its own mapping
+            
+                # 2) If UI search fails, use your idea: reload Terrabis with the brand in the URL
+                if not brand_successfully_selected:
+                    st.warning("Brand not found via search; applying URL fallback…")
+                    brand_successfully_selected = open_terrabis_with_brand(
+                        driver, wait,
+                        city_slug="grayville",
+                        category_site_name=website_cat,
+                        brand_site_name=mapped_brand,   # mapped brand → slug
+                        row_index=row_index
+                    )
+
 
             # --- WEIGHT SELECTION (CONDITIONAL) ---
             # Only proceed with weight selection if the brand was successfully selected (or skipped)
@@ -1657,6 +1762,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
