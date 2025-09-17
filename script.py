@@ -1,3 +1,27 @@
+# --- distutils shim for Python 3.12+ (must be BEFORE importing undetected_chromedriver) ---
+try:
+    import distutils  # noqa: F401
+except Exception:
+    import types, sys
+    from packaging.version import Version as _PV
+    dv = types.ModuleType("distutils")
+    dv_version = types.ModuleType("distutils.version")
+    class LooseVersion(str):
+        def __new__(cls, v): return str.__new__(cls, v)
+        def _v(self): return _PV(str(self))
+        def __lt__(self, o): return self._v() < _PV(str(o))
+        def __le__(self, o): return self._v() <= _PV(str(o))
+        def __gt__(self, o): return self._v() > _PV(str(o))
+        def __ge__(self, o): return self._v() >= _PV(str(o))
+        def __eq__(self, o): return self._v() == _PV(str(o))
+    dv_version.LooseVersion = LooseVersion
+    dv.version = dv_version
+    sys.modules["distutils"] = dv
+    sys.modules["distutils.version"] = dv_version
+# ----------------------------------------------------------------------
+
+
+
 import re
 import time
 import io
@@ -1194,5 +1218,6 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
