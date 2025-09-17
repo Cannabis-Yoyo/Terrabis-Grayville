@@ -1,4 +1,4 @@
-chromiuM
+chromium
 chromium-driver
 fonts-liberation
 fonts-noto-color-emoji
