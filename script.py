@@ -1,42 +1,37 @@
 # --- distutils shim for Python 3.12+ (must be BEFORE importing undetected_chromedriver) ---
 try:
-    # If Python provides it (<=3.11 or distro shim), do nothing.
     from distutils.version import LooseVersion  # noqa: F401
 except Exception:
     import types, sys, re
     from packaging.version import Version as _PV
 
     def _parts_list(v: str):
-        # distutils.LooseVersion exposes .version as a list like ['120', '0', '6099', '224']
-        # Good enough for uc which accesses [0] for major.
         return re.split(r"[^\w]+", v.strip())  # split on dots/dashes, keep digits/letters
 
-class LooseVersion(str):
-    # Minimal drop-in: has `.version` (list) and `.vstring` (str), supports comparisons
-    def __new__(cls, v):
-        obj = str.__new__(cls, v)
-        # make version items ints when possible (UC uses version[0])
-        parts = [p for p in _parts_list(str(v)) if p != ""]
-        def _cast(x):
-            try:
-                return int(x)
-            except Exception:
-                return x
-        obj.version = [_cast(p) for p in parts]
-        return obj
+    class LooseVersion(str):
+        # Minimal drop-in: has `.version` (list of ints/strs) and `.vstring` (str), supports comparisons
+        def __new__(cls, v):
+            obj = str.__new__(cls, v)
+            parts = [p for p in _parts_list(str(v)) if p != ""]
+            def _cast(x):
+                try:
+                    return int(x)
+                except Exception:
+                    return x
+            obj.version = [_cast(p) for p in parts]
+            return obj
 
-    @property
-    def vstring(self):
-        return str(self)
+        @property
+        def vstring(self):
+            return str(self)
 
-    def _v(self): 
-        return _PV(str(self))
-
-    def __lt__(self, o): return self._v() <  _PV(str(o))
-    def __le__(self, o): return self._v() <= _PV(str(o))
-    def __gt__(self, o): return self._v() >  _PV(str(o))
-    def __ge__(self, o): return self._v() >= _PV(str(o))
-    def __eq__(self, o): return self._v() == _PV(str(o))
+        def _v(self):
+            return _PV(str(self))
+        def __lt__(self, o): return self._v() <  _PV(str(o))
+        def __le__(self, o): return self._v() <= _PV(str(o))
+        def __gt__(self, o): return self._v() >  _PV(str(o))
+        def __ge__(self, o): return self._v() >= _PV(str(o))
+        def __eq__(self, o): return self._v() == _PV(str(o))
 
     dv = types.ModuleType("distutils")
     dv_version = types.ModuleType("distutils.version")
@@ -45,6 +40,7 @@ class LooseVersion(str):
     sys.modules["distutils"] = dv
     sys.modules["distutils.version"] = dv_version
 # ----------------------------------------------------------------------
+
 
 
 
@@ -234,7 +230,8 @@ def get_driver():
             "or set UC_CHROME_BINARY to the absolute path."
         )
 
-    os.environ["UC_CHROME_BINARY"] = chrome_bin  # let UC know which browser to launch
+    os.environ["UC_CHROME_BINARY"] = chrome_bin  # tell UC which browser to launch
+    major = _chrome_major(chrome_bin)
 
     options = uc.ChromeOptions()
     options.add_argument("--headless=new")
@@ -254,9 +251,14 @@ def get_driver():
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
 
-    driver = uc.Chrome(options=options)
+    driver = uc.Chrome(
+        options=options,
+        version_main=major,       # match the installed Chromium major
+        patcher_force_close=True  # safer cleanup on Cloud
+    )
     wait = WebDriverWait(driver, 20)
     return driver, wait
+
     
 # def get_driver():
 #     """
@@ -1325,6 +1327,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
