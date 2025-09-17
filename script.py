@@ -219,30 +219,43 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
     except Exception as e:
         st.error(f"Error saving data to Excel for row {row_index}: {e}")
 
-def get_driver():
+def get_driver(headful: bool = False):
     import undetected_chromedriver as uc
     from selenium.webdriver.support.ui import WebDriverWait
 
     chrome_bin = _find_chrome_binary()
     if not chrome_bin:
         raise FileNotFoundError(
-            "No Chrome/Chromium binary found. Install via packages.txt (chromium, chromium-driver) "
-            "or set UC_CHROME_BINARY to the absolute path."
+            "No Chrome/Chromium binary found. Install it or set UC_CHROME_BINARY."
         )
 
-    os.environ["UC_CHROME_BINARY"] = chrome_bin  # tell UC which browser to launch
+    os.environ["UC_CHROME_BINARY"] = chrome_bin
     major = _chrome_major(chrome_bin)
 
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
+    if headful:
+        # headed
+        options.add_argument("--start-maximized")
+        # keep the window open after the script finishes (nice for local debug)
+        try:
+            options.add_experimental_option("detach", True)
+        except Exception:
+            pass
+        # On Linux you often still need these two for containerized runs
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+    else:
+        # headless
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--hide-scrollbars")
+
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--force-device-scale-factor=1")
     options.add_argument("--disable-features=IsolateOrigins,site-per-process")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--hide-scrollbars")
     options.add_argument("--enable-precise-memory-info")
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
@@ -253,12 +266,11 @@ def get_driver():
 
     driver = uc.Chrome(
         options=options,
-        version_main=major,       # match the installed Chromium major
-        patcher_force_close=True  # safer cleanup on Cloud
+        version_main=major,
+        patcher_force_close=True
     )
     wait = WebDriverWait(driver, 20)
     return driver, wait
-
     
 # def get_driver():
 #     """
@@ -1327,6 +1339,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
