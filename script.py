@@ -1104,77 +1104,98 @@ if uploaded_file:
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
             # --- START NEW CODE BLOCK: Handle IFRAME and Wait for Products ---
             try:
-                # Give the host page a breath
-                time.sleep(1.5)
+                time.sleep(1.0)
             
-                # 0) Ensure geo is granted (helps menus that filter by location)
-                try:
-                    for origin in ("https://terrabis.co", "https://app.dutchie.com"):
-                        driver.execute_cdp_cmd("Browser.grantPermissions", {
-                            "origin": origin,
-                            "permissions": ["geolocation"]
-                        })
-                    # Grayville-ish coordinates; adjust if needed
-                    driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
-                        "latitude": 38.4142, "longitude": -88.0039, "accuracy": 50
-                    })
-                except Exception as _geo_e:
-                    print("Geolocation CDP setup skipped/failed:", _geo_e)
-            
-                # 1) Wait for Dutchie iframe and switch to it
-                # (try multiple selectors because sites rename ids/classes)
-                iframe_locator = (By.CSS_SELECTOR, "iframe#dutchie--embed__iframe, iframe[id*='dutchie'], iframe[src*='app.dutchie.com']")
-                WebDriverWait(driver, 30).until(
-                    EC.frame_to_be_available_and_switch_to_it(iframe_locator)
+                # Find the Dutchie iframe (and capture its src for a fallback)
+                iframe = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((
+                        By.CSS_SELECTOR,
+                        "iframe#dutchie--embed__iframe, iframe[id*='dutchie'], iframe[src*='dutchie.com']"
+                    ))
                 )
-                st.info(f"Switched to Dutchie iframe for row {row_index}.")
+                iframe_src = iframe.get_attribute("src") or ""
+                WebDriverWait(driver, 10).until(lambda d: iframe.get_attribute("src") and "about:blank" not in iframe.get_attribute("src"))
             
-                # 2) Wait for DOM readiness inside the iframe
-                for _ in range(20):  # ~10s total
+                # Try switching INTO the iframe first
+                try:
+                    WebDriverWait(driver, 15).until(EC.frame_to_be_available_and_switch_to_it(iframe))
+                    st.info(f"Switched to Dutchie iframe for row {row_index}.")
+            
+                    # DOM ready, then wait for products
+                    WebDriverWait(driver, 15).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+            
+                    # Close cookie/banner if it appears
                     try:
-                        rs = driver.execute_script("return document.readyState")
-                        if rs in ("interactive", "complete"):
-                            break
+                        cookie_btn = WebDriverWait(driver, 3).until(EC.element_to_be_clickable((
+                            By.XPATH,
+                            "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
+                        )))
+                        stable_click(driver, cookie_btn)
+                        time.sleep(0.4)
                     except Exception:
                         pass
-                    time.sleep(0.5)
             
-                # 3) Close cookie / banner / region pop if present (best-effort)
-                try:
-                    cookie_btn = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((
+                    # Wait for product tiles (several possible selectors)
+                    WebDriverWait(driver, 25).until(EC.any_of(
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']")),
+                        EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'product') and (contains(@class,'card') or contains(@class,'item'))]"))
+                    ))
+                    time.sleep(0.8)  # let prices/options hydrate
+            
+                except TimeoutException:
+                    # Fallback: open the Dutchie menu directly (avoids headless iframe issues)
+                    driver.switch_to.default_content()
+                    if not iframe_src:
+                        raise  # no URL to open; let outer handler catch
+            
+                    st.info("Iframe slow/blocked; opening Dutchie menu directly.")
+                    driver.get(iframe_src)
+            
+                    # Grant geo on dutchie.com (helps some locations)
+                    try:
+                        driver.execute_cdp_cmd("Browser.grantPermissions", {
+                            "origin": "https://dutchie.com",
+                            "permissions": ["geolocation"]
+                        })
+                        # Grayville-ish (adjust if you like)
+                        driver.execute_cdp_cmd("Emulation.setGeolocationOverride", {
+                            "latitude": 38.4142, "longitude": -88.0039, "accuracy": 50
+                        })
+                    except Exception:
+                        pass
+            
+                    WebDriverWait(driver, 20).until(lambda d: d.execute_script("return document.readyState") in ("interactive", "complete"))
+            
+                    # Close cookie/banner if present
+                    try:
+                        cookie_btn = WebDriverWait(driver, 5).until(EC.element_to_be_clickable((
                             By.XPATH,
-                            "//button[normalize-space()='Accept' or normalize-space()='Accept all' or normalize-space()='I agree' or contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
-                        ))
-                    )
-                    stable_click(driver, cookie_btn)
-                    time.sleep(0.5)
-                except Exception:
-                    pass
+                            "//button[normalize-space()='Accept' or normalize-space()='Accept all' or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'accept')]"
+                        )))
+                        stable_click(driver, cookie_btn)
+                        time.sleep(0.4)
+                    except Exception:
+                        pass
             
-                # 4) Wait for products to appear (use several possible testids/classes)
-                wait_any = WebDriverWait(driver, 35)
-                wait_any.until(EC.any_of(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']")),
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='menu'][data-testid*='item']")),
-                    EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class,'product') and (contains(@class,'card') or contains(@class,'item'))]"))
-                ))
-            
-                # tiny pause to let price/options render
-                time.sleep(1.0)
+                    # Wait for product tiles on the full dutchie page
+                    WebDriverWait(driver, 30).until(EC.any_of(
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div[data-testid='product-list-item']")),
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "[data-testid*='product'][data-testid*='item']"))
+                    ))
+                    time.sleep(0.8)
             
             except TimeoutException as e:
                 st.error(f"Timed out waiting for Dutchie menu for row {row_index}. Error: {e}")
             
-                # Helpful debug: list iframes + a screenshot
+                # Debug helpers
                 try:
                     driver.switch_to.default_content()
                     iframes = driver.find_elements(By.TAG_NAME, "iframe")
                     st.write("Iframes on page:", [f.get_attribute("src") for f in iframes])
                     st.image(driver.get_screenshot_as_png(), caption="Screenshot at timeout", use_container_width=True)
-                except Exception as ex:
-                    print("Could not capture debug info:", ex)
+                except Exception:
+                    pass
             
                 save_data_to_file(row_index, " ", " ", " ", " ")
                 try:
@@ -1184,7 +1205,7 @@ if uploaded_file:
                 continue
             
             except Exception as e:
-                st.error(f"An unexpected error occurred while entering Dutchie for row {row_index}: {e}")
+                st.error(f"Unexpected error while entering Dutchie for row {row_index}: {e}")
                 save_data_to_file(row_index, " ", " ", " ", " ")
                 try:
                     driver.switch_to.default_content()
@@ -1192,6 +1213,7 @@ if uploaded_file:
                     pass
                 continue
             # --- END NEW CODE BLOCK ---
+
 
 
             # Extract the relevant data
@@ -1547,6 +1569,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
