@@ -13,6 +13,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.action_chains import ActionChains
 from openpyxl import load_workbook 
 from openpyxl.utils import get_column_letter # Add this import
+from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.support import expected_conditions as EC
+
 
 TOKEN_RE = re.compile(r"""
     \d+(?:\.\d+)?            # integer or decimal, e.g. 3 or 3.5
@@ -122,28 +125,44 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
 
 def get_driver():
     """
-    Initialize and configure the Selenium WebDriver with undetected_chromedriver.
-    
-    Returns:
-        driver (webdriver.Chrome): The initialized WebDriver instance.
-        wait (WebDriverWait): WebDriverWait instance for waiting for elements.
+    Headless-safe UC Chrome for Streamlit Cloud / Linux.
     """
+    import os
+    import undetected_chromedriver as uc
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    # On Streamlit Cloud we install chromium via packages.txt
+    # You can also set this in your app before calling get_driver()
+    os.environ.setdefault("UC_CHROME_BINARY", "/usr/bin/chromium")
+
     options = uc.ChromeOptions()
-    
-    # Configuring some Chrome options to reduce bot detection
+    # — Headless & sandboxing —
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                         "AppleWebKit/537.36 (KHTML, like Gecko) "
-                         "Chrome/115.0.0.0 Safari/537.36")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--force-device-scale-factor=1")
+    options.add_argument("--disable-features=IsolateOrigins,site-per-process")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--start-maximized")  # Open browser maximized
 
-    # Initialize Undetected Chromedriver
+    # — Make layout deterministic in headless —
+    options.add_argument("--hide-scrollbars")
+    options.add_argument("--enable-precise-memory-info")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-infobars")
+
+    # — Stable UA (helps sites that alter layout for bots) —
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+
     driver = uc.Chrome(options=options)
-    wait = WebDriverWait(driver, 15)  # Set 15 seconds wait time for elements to load
-    
+    wait = WebDriverWait(driver, 20)
     return driver, wait
+
 
 def clean_thc_value(thc_string):
     """
@@ -1119,4 +1138,5 @@ if uploaded_file:
                 data=excel_buffer.getvalue(), # Get the BytesIO content
                 file_name=f"updated_{uploaded_file.name}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
             )
