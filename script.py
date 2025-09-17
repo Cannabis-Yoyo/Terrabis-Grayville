@@ -1,24 +1,37 @@
 # --- distutils shim for Python 3.12+ (must be BEFORE importing undetected_chromedriver) ---
 try:
-    import distutils  # noqa: F401
+    # If Python provides it (<=3.11 or distro shim), do nothing.
+    from distutils.version import LooseVersion  # noqa: F401
 except Exception:
-    import types, sys
+    import types, sys, re
     from packaging.version import Version as _PV
-    dv = types.ModuleType("distutils")
-    dv_version = types.ModuleType("distutils.version")
+
+    def _parts_list(v: str):
+        # distutils.LooseVersion exposes .version as a list like ['120', '0', '6099', '224']
+        # Good enough for uc which accesses [0] for major.
+        return re.split(r"[^\w]+", v.strip())  # split on dots/dashes, keep digits/letters
+
     class LooseVersion(str):
-        def __new__(cls, v): return str.__new__(cls, v)
+        # Minimal drop-in: has `.version` and supports comparisons
+        def __new__(cls, v):
+            obj = str.__new__(cls, v)
+            obj.version = [p for p in _parts_list(str(v)) if p != ""]
+            return obj
         def _v(self): return _PV(str(self))
-        def __lt__(self, o): return self._v() < _PV(str(o))
+        def __lt__(self, o): return self._v() <  _PV(str(o))
         def __le__(self, o): return self._v() <= _PV(str(o))
-        def __gt__(self, o): return self._v() > _PV(str(o))
+        def __gt__(self, o): return self._v() >  _PV(str(o))
         def __ge__(self, o): return self._v() >= _PV(str(o))
         def __eq__(self, o): return self._v() == _PV(str(o))
+
+    dv = types.ModuleType("distutils")
+    dv_version = types.ModuleType("distutils.version")
     dv_version.LooseVersion = LooseVersion
     dv.version = dv_version
     sys.modules["distutils"] = dv
     sys.modules["distutils.version"] = dv_version
 # ----------------------------------------------------------------------
+
 
 
 
@@ -1218,6 +1231,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
