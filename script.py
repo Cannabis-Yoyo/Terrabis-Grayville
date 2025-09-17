@@ -53,6 +53,32 @@ from openpyxl.utils import get_column_letter # Add this import
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.support import expected_conditions as EC
 import os, subprocess, re
+
+def _find_chrome_binary():
+    env = os.environ.get("UC_CHROME_BINARY")
+    if env and os.path.exists(env):
+        return env
+    candidates = [
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+def _chrome_major(chrome_bin):
+    try:
+        out = subprocess.check_output([chrome_bin, "--version"]).decode()
+        m = re.search(r"(\d+)\.", out)
+        return int(m.group(1)) if m else 120
+    except Exception:
+        return 120
+# -----------------------------------
+
+
 # ---------- Headless helpers ----------
 from selenium.common.exceptions import WebDriverException
 
@@ -1297,6 +1323,7 @@ if uploaded_file:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
             )
+
 
 
 
