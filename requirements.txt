@@ -4,3 +4,5 @@ undetected-chromedriver==3.1.5
 selenium==4.11.0
 openpyxl==3.1.2
 urllib3==1.26.14
+distutils
+chromedriver-autoinstaller
