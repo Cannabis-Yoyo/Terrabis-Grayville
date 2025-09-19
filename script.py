@@ -127,18 +127,30 @@ from playwright.sync_api import sync_playwright
 
 # from playwright.sync_api import sync_playwright
 
+import os
+from playwright.sync_api import sync_playwright
+
 def get_driver():
     """
     Initialize and configure the Playwright WebDriver.
+    Ensure that Playwright's required browsers are installed before launching.
     """
-    with sync_playwright() as p:
-        # Launch the Chromium browser
-        browser = p.chromium.launch(headless=True)  # or p.firefox.launch(headless=True)
-        page = browser.new_page()
-        
-        # Set the page as the return value
-        return page
+    try:
+        with sync_playwright() as p:
+            # Check if the necessary browser (Chromium) is installed
+            chromium_path = os.path.expanduser("~/.cache/ms-playwright/chromium")
+            if not os.path.exists(chromium_path):
+                print("Chromium browser not found. Installing Playwright browsers.")
+                p.chromium.install()  # Install Chromium (or any other required browser)
 
+            # Launch the browser
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            return page
+
+    except Exception as e:
+        print(f"Error during Playwright browser launch: {e}")
+        raise
 
 
 def clean_thc_value(thc_string):
@@ -3063,6 +3075,7 @@ if uploaded_file:
 #                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #             )
+
 
 
 
