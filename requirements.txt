@@ -1,7 +1,7 @@
+playwright
 streamlit==1.49.1
 pandas
 openpyxl
 selenium==4.27.1
-undetected-chromedriver==3.5.5
 chromedriver-autoinstaller
 setuptools
