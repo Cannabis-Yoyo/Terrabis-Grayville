@@ -125,6 +125,8 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
 
 from playwright.sync_api import sync_playwright
 
+# from playwright.sync_api import sync_playwright
+
 def get_driver():
     """
     Initialize and configure the Playwright WebDriver.
@@ -3061,6 +3063,7 @@ if uploaded_file:
 #                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #             )
+
 
 
 
