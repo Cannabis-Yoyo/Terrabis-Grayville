@@ -123,30 +123,20 @@ def save_data_to_file(row_index, discounted_price, original_price, product_thc, 
 
 
 
+from playwright.sync_api import sync_playwright
+
 def get_driver():
     """
-    Initialize and configure the Selenium WebDriver with undetected_chromedriver.
+    Initialize and configure the Playwright WebDriver.
     """
-    options = uc.ChromeOptions()
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-renderer-backgrounding")
-    options.add_argument("--disable-background-timer-throttling")
-    options.add_argument("--disable-backgrounding-occluded-windows")
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
-    )
+    with sync_playwright() as p:
+        # Launch the Chromium browser
+        browser = p.chromium.launch(headless=True)  # or p.firefox.launch(headless=True)
+        page = browser.new_page()
+        
+        # Set the page as the return value
+        return page
 
-    # IMPORTANT: pin to your installed Chrome major version.
-    # From your stacktrace it's 140.x, so set version_main=140.
-    # If your local Chrome updates, just change this number.
-    driver = uc.Chrome(options=options, version_main=140, use_subprocess=True)
-
-    wait = WebDriverWait(driver, 15)
-    return driver, wait
 
 
 def clean_thc_value(thc_string):
@@ -3071,6 +3061,7 @@ if uploaded_file:
 #                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #             )
+
 
 
 
