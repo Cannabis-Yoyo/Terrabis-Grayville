@@ -4,4 +4,4 @@ openpyxl
 selenium==4.27.1
 undetected-chromedriver==3.5.5
 chromedriver-autoinstaller
-
+setuptools
